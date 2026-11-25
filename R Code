@@ -4,18 +4,17 @@ install.packages("arrow")
 library(arrow)
 library(dplyr)
 library(lubridate)
+library(scales)
 
 taxi_5 <- read_parquet(file.choose(), header = TRUE)
 taxi_6 <- read_parquet(file.choose(), header = TRUE)
 taxi_7 <- read_parquet(file.choose(), header = TRUE)
+taxi_summer2019 <- bind_rows(taxi_5,taxi_6,taxi_7)
 glimpse(taxi_summer2019)
 
-taxi_summer2019 <- bind_rows(taxi_5,taxi_6,taxi_7)
-head(taxi_summer2019)
-names(taxi_summer2019)
 ###20,880,424 rows of data or trips provided in summer 2019.
 
-### Makes time stamped data meaningful and easier to read. Parquet defaults to POSIXct, this ensure uniformity and no oddities in the data 
+### Makes time stamped data meaningful and easier to read. 
 taxi_summer2019 <- taxi_summer2019 %>%
   mutate(
     tpep_pickup_datetime  = as.POSIXct(tpep_pickup_datetime),
@@ -47,8 +46,6 @@ taxi_clean <- taxi_clean %>%
     fare_pretip = total_amount - tip_amount,                                        ### fare amount before tip
     tip_pct = if_else(fare_pretip > 0, tip_amount / fare_pretip * 100, NA_real_),   ### tip % on base fare
     tip_share_of_total = if_else(total_amount > 0, tip_amount / total_amount * 100, NA_real_),   ### tip% on total
-    airport_trip     = if_else(airport_fee >0, 1,0), ### was it an airport trip
-    tip_pct_airport = if_else(airport_trip == 1, tip_pct, NA_real_),            ### Percent tip for airport trip
     tip_per_passenger = if_else(passenger_count > 0,                             #### Tip % by passenger 
                                 tip_amount / passenger_count, NA_real_),
     dist_bin = cut(trip_distance,                                                  ###distance of trips in mile bins
@@ -56,3 +53,107 @@ taxi_clean <- taxi_clean %>%
                labels = c("0-1","1-2","2-3","3-4","4-5","5-6","6-7","7-8","8-9","9+")),
     paid_by_card = as.integer(payment_type == 1)                                ### tips by payment type (cash not recorded)
   )
+
+View(taxi_clean)
+
+### Calculate/review average/nominal tipping amounts on the various categories
+glimpse(taxi_clean)
+
+pct_tipped_overall <- taxi_clean %>%                                       ###total tip percent, all rides
+  summarise(n_rides = n(),
+            pct_tipped = mean(tipped)*100)
+print(pct_tipped_overall)
+
+pct_tipped_airport <- taxi_clean %>%                                        ###all airport data n/a, dropping.
+  filter(airport_trip == 1) %>%
+  summarise(
+    pct_tipped = mean(tipped)*100
+  )
+
+tip_by_distance <- taxi_clean %>%                                    ### Distance Tip data Excellent output but 
+  filter(!is.na(trip_distance), trip_distance >= 0) %>%              ### data looks uniform...no smoking gun here.
+  mutate(
+    dist_bin = cut(
+      trip_distance,
+      breaks = c(seq(0, 9, by = 1), Inf),
+      right = FALSE,
+      include.lowest = TRUE,
+      labels = c("0-1", "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8", "8-9", "9+")
+    )
+  ) %>%
+  group_by(dist_bin) %>%
+  summarise(
+    total_rides      = n(),
+    percent_tipped   = mean(tip_amount > 0, na.rm = TRUE),
+    avg_tip_pct_fare = mean(ifelse(fare_pretip > 0, tip_amount / fare_pretip, NA), na.rm = TRUE),
+    avg_nominal_tip  = mean(tip_amount, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_rides      = comma(total_rides),
+    percent_tipped   = percent(percent_tipped, accuracy = 0.1),
+    avg_tip_pct_fare = percent(avg_tip_pct_fare, accuracy = 0.1),
+    avg_nominal_tip  = dollar(avg_nominal_tip, accuracy = 0.01)
+  )
+
+View(tip_by_distance)
+
+tip_by_month <- taxi_clean %>%                                             ###data shows off-months? data still uniform.
+  # mutate(pickup_month_name = month(tpep_pickup_datetime, label = TRUE, abbr = FALSE)) %>%
+  filter(!is.na(pickup_month_name)) %>%
+  group_by(pickup_month_name) %>%
+  summarise(
+    total_rides      = n(),
+    percent_tipped   = mean(tip_amount > 0, na.rm = TRUE),
+    avg_tip_pct_fare = mean(ifelse(fare_pretip > 0, tip_amount / fare_pretip, NA), na.rm = TRUE),
+    avg_nominal_tip  = mean(tip_amount, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_rides      = comma(total_rides),
+    percent_tipped   = percent(percent_tipped, accuracy = 0.1),
+    avg_tip_pct_fare = percent(avg_tip_pct_fare, accuracy = 0.1),
+    avg_nominal_tip  = dollar(avg_nominal_tip, accuracy = 0.01)
+  )
+
+View(tip_by_month)
+
+tip_by_dow <- taxi_clean %>%                                                #### tips get light on the weekends...
+  # mutate(pickup_dow = wday(tpep_pickup_datetime, label = TRUE, abbr = FALSE)) %>%
+  filter(!is.na(pickup_dow)) %>%
+  group_by(pickup_dow) %>%
+  summarise(
+    total_rides      = n(),
+    percent_tipped   = mean(tip_amount > 0, na.rm = TRUE),
+    avg_tip_pct_fare = mean(ifelse(fare_pretip > 0, tip_amount / fare_pretip, NA), na.rm = TRUE),
+    avg_nominal_tip  = mean(tip_amount, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_rides      = comma(total_rides),
+    percent_tipped   = percent(percent_tipped, accuracy = 0.1),
+    avg_tip_pct_fare = percent(avg_tip_pct_fare, accuracy = 0.1),
+    avg_nominal_tip  = dollar(avg_nominal_tip, accuracy = 0.01)
+  )
+
+View(tip_by_dow)
+
+tip_by_hour <- taxi_clean %>%                                           #### Midnight-4am, Noon-4p are higher % of tips
+  # mutate(pickup_hour = hour(tpep_pickup_datetime)) %>%                 ### Amounts show similar pattern
+  filter(!is.na(pickup_hour)) %>%
+  group_by(pickup_hour) %>%
+  summarise(
+    total_rides      = n(),
+    percent_tipped   = mean(tip_amount > 0, na.rm = TRUE),
+    avg_tip_pct_fare = mean(ifelse(fare_pretip > 0, tip_amount / fare_pretip, NA), na.rm = TRUE),
+    avg_nominal_tip  = mean(tip_amount, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_rides      = comma(total_rides),
+    percent_tipped   = percent(percent_tipped, accuracy = 0.1),
+    avg_tip_pct_fare = percent(avg_tip_pct_fare, accuracy = 0.1),
+    avg_nominal_tip  = dollar(avg_nominal_tip, accuracy = 0.01)
+  )
+
+View(tip_by_hour)
