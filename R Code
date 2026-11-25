@@ -14,8 +14,7 @@ glimpse(taxi_summer2019)
 
 ###20,880,424 rows of data or trips provided in summer 2019.
 
-### Makes time stamped data meaningful and easier to read. 
-taxi_summer2019 <- taxi_summer2019 %>%
+taxi_summer2019 <- taxi_summer2019 %>%                  #### POSIXct default for peguet files, ensuring uniformity
   mutate(
     tpep_pickup_datetime  = as.POSIXct(tpep_pickup_datetime),
     tpep_dropoff_datetime = as.POSIXct(tpep_dropoff_datetime)
