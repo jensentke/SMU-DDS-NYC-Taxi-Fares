@@ -15,7 +15,7 @@ head(taxi_summer2019)
 names(taxi_summer2019)
 ###20,880,424 rows of data or trips provided in summer 2019.
 
-### Makes time stamped data meaningful and easier to read. 
+### Makes time stamped data meaningful and easier to read. Parquet defaults to POSIXct, this ensure uniformity and no oddities in the data 
 taxi_summer2019 <- taxi_summer2019 %>%
   mutate(
     tpep_pickup_datetime  = as.POSIXct(tpep_pickup_datetime),
