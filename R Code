@@ -157,3 +157,73 @@ tip_by_hour <- taxi_clean %>%                                           #### Mid
   )
 
 View(tip_by_hour)
+
+####################################################################################
+              ### ANOVA AND REGRESSION TESTING #####
+####################################################################################
+
+# Run ANOVA for NOMINAL tip amount 
+taxi_anova_df <- taxi_clean %>%                                      
+  filter(!is.na(tip_amount), !is.na(pickup_hour), !is.na(pickup_dow), !is.na(trip_distance), trip_distance >= 0) %>%
+  mutate(
+    pickup_hour = as.factor(pickup_hour),
+    pickup_dow  = as.factor(pickup_dow),
+    dist_bin    = cut(
+      trip_distance,
+      breaks = c(seq(0, 9, by = 1), Inf),
+      right = FALSE,
+      include.lowest = TRUE,
+      labels = c("0-1", "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8", "8-9", "9+")
+    )
+  )
+
+# Run ANOVA for NOMINAL tip amount                                     
+tip_aov <- aov(tip_amount ~ pickup_hour + pickup_dow + dist_bin, data = taxi_anova_df)
+summary(tip_aov)
+
+taxi_sample <- taxi_anova_df %>%
+  slice_sample(n = 500000)
+tip_aov_interact <- aov(tip_amount ~ pickup_hour * pickup_dow + dist_bin, data = taxi_sample)
+summary(tip_aov_interact)
+TukeyHSD(tip_aov_interact, which = "pickup_dow")                    ### specifies best day best compared to others (group 1 - group 2)
+TukeyHSD(tip_aov_interact, which = "pickup_hour")                   ### specifies best hour compared to others
+TukeyHSD(tip_aov_interact, which = "dist_bin")                     ### specifies best distance bin compared to others
+
+
+#### PERCENT testing on tipping
+taxi_anova_df <- taxi_clean %>%                                     
+  filter(!is.na(tip_amount), !is.na(pickup_hour), !is.na(pickup_dow), !is.na(trip_distance), trip_distance >= 0) %>%
+  mutate(
+    tip_pct = ifelse(fare_pretip > 0, (tip_amount / fare_pretip) * 100, NA),
+    pickup_hour = as.factor(pickup_hour),
+    pickup_dow  = as.factor(pickup_dow),
+    dist_bin    = cut(
+      trip_distance,
+      breaks = c(seq(0, 9, by = 1), Inf),
+      right = FALSE,
+      include.lowest = TRUE,
+      labels = c("0-1", "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8", "8-9", "9+")
+    )
+  )
+# Run ANOVA for percentage tip amount
+tip_aov <- aov(tip_pct ~ pickup_hour + pickup_dow + dist_bin, data = taxi_anova_df)
+summary(tip_aov)
+
+taxi_sample <- taxi_anova_df %>%
+  slice_sample(n = 500000)
+tippct_aov_interact <- aov(tip_pct ~ pickup_hour * pickup_dow + dist_bin, data = taxi_sample)
+summary(tippct_aov_interact)
+TukeyHSD(tippct_aov_interact, which = "pickup_dow")                    ### specifies best day best compared to others
+TukeyHSD(tippct_aov_interact, which = "pickup_hour")                   ### specifies best hour compared to others
+TukeyHSD(tippct_aov_interact, which = "dist_bin")                     ### specifies best distance bin compared to others
+
+
+### Next up...regression analysis, general scatter plots, histograms, visualization pieces, then RShiny.
+
+###Javonte to incorporate pickup/dropoff to test for other impacts. 
+
+
+
+
+
+
