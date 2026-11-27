@@ -235,7 +235,7 @@ taxi_clean %>%
     color = "black",
     stroke = 1
   ) +
-  coord_cartesian(ylim = c(0, 8)) +
+  coord_cartesian(ylim = c(0, 30)) +
   scale_y_continuous(labels = dollar_format()) +
   labs(
     title    = "Distribution of Taxi Tip Amounts by Ride Distance",
