@@ -5,6 +5,8 @@ library(arrow)
 library(dplyr)
 library(lubridate)
 library(scales)
+library(ggplot2)
+library(ggthemes)
 
 taxi_5 <- read_parquet(file.choose(), header = TRUE)
 taxi_6 <- read_parquet(file.choose(), header = TRUE)
@@ -58,9 +60,27 @@ View(taxi_clean)
 ### Calculate/review average/nominal tipping amounts on the various categories
 glimpse(taxi_clean)
 
-pct_tipped_overall <- taxi_clean %>%                                       ###total tip percent, all rides
-  summarise(n_rides = n(),
-            pct_tipped = mean(tipped)*100)
+pct_tipped_overall <- taxi_clean %>%                                       ###total tip percent, all rides 69%
+  summarise(                                                                ### 20,454,316 rides
+    n_rides = n(),
+    pct_tipped = mean(tipped, na.rm = TRUE) *100
+    )
+print(pct_tipped_overall)
+
+pct_tipped_overall <- taxi_clean %>%                                       ###total tip percent, cash 0.888%
+  filter(payment_type == "2") %>%                                         ### 5,656,134 rides (25% roughly)
+  summarise(
+    n_rides = n(),
+    pct_tipped = mean(tipped, na.rm = TRUE) *100
+  )
+print(pct_tipped_overall)
+
+pct_tipped_overall <- taxi_clean %>%                                       ###total tip percent, credit card 96% !!!
+  filter(payment_type == "1") %>%                                         ### 14,680,948 rides (75% roughly)
+  summarise(                                                            ### only 117,234 rides not cc or cash (.6%)
+    n_rides = n(),
+    pct_tipped = mean(tipped, na.rm = TRUE) *100
+  )
 print(pct_tipped_overall)
 
 pct_tipped_airport <- taxi_clean %>%                                        ###all airport data n/a, dropping.
@@ -157,6 +177,75 @@ tip_by_hour <- taxi_clean %>%                                           #### Mid
 
 View(tip_by_hour)
 
+taxi_clean %>%
+  filter(!is.na(tip_amount), !is.na(pickup_dow)) %>%
+  ggplot(aes(x = factor(pickup_dow), y = tip_amount, fill = factor(pickup_dow))) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 8,
+    size = 3,
+    color = "black",
+    stroke = 1
+  ) +
+  coord_cartesian(ylim = c(0, 8)) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title    = "Distribution of Taxi Tip Amounts by Day of the Week",
+    subtitle = "Stars (*) show average",
+    x        = "Day of the Week (1 - Monday)",
+    y        = "Tip Amount ($)"
+  ) +
+  theme_clean() +
+  theme(legend.position = "none")
+
+taxi_clean %>%
+  filter(!is.na(tip_amount), !is.na(pickup_hour)) %>%
+  ggplot(aes(x = factor(pickup_hour), y = tip_amount, fill = factor(pickup_hour))) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 8,
+    size = 3,
+    color = "black",
+    stroke = 1
+  ) +
+  coord_cartesian(ylim = c(0, 8)) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title    = "Distribution of Taxi Tip Amounts by Hour of Day",
+    subtitle = "Stars show average",
+    x        = "Hour of Day (0 - Midnight to 1am)",
+    y        = "Tip Amount ($)"
+  ) +
+  theme_clean() +
+  theme(legend.position = "none")
+
+taxi_clean %>%
+  filter(!is.na(tip_amount), !is.na(dist_bin)) %>%
+  ggplot(aes(x = factor(dist_bin), y = tip_amount, fill = factor(dist_bin))) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 8,
+    size = 3,
+    color = "black",
+    stroke = 1
+  ) +
+  coord_cartesian(ylim = c(0, 8)) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title    = "Distribution of Taxi Tip Amounts by Ride Distance",
+    subtitle = "Stars show average",
+    x        = "Distance in Miles",
+    y        = "Tip Amount ($)"
+  ) +
+  theme_clean() +
+  theme(legend.position = "none")
+
 ####################################################################################
               ### ANOVA AND REGRESSION TESTING #####
 ####################################################################################
@@ -217,12 +306,6 @@ TukeyHSD(tippct_aov_interact, which = "pickup_hour")                   ### speci
 TukeyHSD(tippct_aov_interact, which = "dist_bin")                     ### specifies best distance bin compared to others
 
 
-### Next up...regression analysis, general scatter plots, histograms, visualization pieces, then RShiny.
+### Next up...regression analysis, then RShiny.
 
 ###Javonte to incorporate pickup/dropoff to test for other impacts. 
-
-
-
-
-
-
