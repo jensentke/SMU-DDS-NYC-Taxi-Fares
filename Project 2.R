@@ -6,6 +6,7 @@ library(arrow)
 library(dplyr)
 library(lubridate)
 library(ggplot2)
+library(forcats)
 
 #Bring in data#
 taxi_5 <- read_parquet(file.choose(), header = TRUE)
@@ -161,3 +162,178 @@ taxi_clean %>%
   summarise(trips = n(), avg_tip = round(mean(tip_amount), 2),
             avg_tip_pct = round(mean(tip_pct, na.rm = TRUE), 2),
             median_tip_pct = round(median(tip_pct, na.rm = TRUE), 2))
+
+#Run ANOVA to compare the average tip amount by pickup and dropoff location#
+set.seed(1)
+taxi_sample <- taxi_clean %>% slice_sample(n = 100000)
+summary(aov(tip_amount ~ PULocationID, data = taxi_sample))
+summary(aov(tip_amount ~ DOLocationID, data = taxi_sample))
+
+#Combined pickup day and pickup hour to pickup and dropoff location and ran ANOVA#
+fit_combined <- aov(tip_amount ~ PULocationID + DOLocationID + pickup_dow_f + factor(pickup_hour), data = taxi_sample)
+summary(fit_combined)
+
+#Add fare amount and trip distance to the combined ANOVA#
+fit_combined2 <- aov(tip_amount ~ PULocationID + DOLocationID +pickup_dow_f + factor(pickup_hour) 
+        + fare_amount + trip_distance, data = taxi_sample)
+summary(fit_combined2)
+
+#Test if adding fare and distance improves model#
+anova(fit_combined, fit_combined2)
+
+#Compare the percentage of tip variation explained by each model#
+summary.lm(fit_combined)$r.squared
+summary.lm(fit_combined2)$r.squared
+
+#Calculate RMSE and MAE to evaluate model prediction errors on training data. RMSE 2.15, MAE 1.46#
+sqrt(mean(residuals(fit_combined2)^2))
+mean(abs(residuals(fit_combined2)))
+
+#Check the distribution of prediction errors#
+summary(residuals(fit_combined2))
+quantile(abs(residuals(fit_combined2)), c(.90, .95, .99, 1))
+
+#Check residual patterns and potential outliers#
+plot(fitted(fit_combined2), residuals(fit_combined2),pch = 16, cex = 0.3, col = "steelblue",
+     xlab = "Predicted Tip ($)", ylab = "Residual ($)") 
+abline(h = 0, col = "red")
+
+#Identify the 10 trips with the largest prediction errors#
+taxi_outliers <- taxi_sample %>%
+  mutate(predicted_tip = fitted(fit_combined2),
+         residual = residuals(fit_combined2)) %>%
+  arrange(desc(abs(residual))) %>%
+  select(tip_amount, predicted_tip, residual, fare_amount,
+         trip_distance, payment_type, PULocationID, DOLocationID)
+
+head(taxi_outliers, 10)
+
+#Count extreme tips and trips with zero recorded distance#
+taxi_sample %>%
+  summarise(total_trips = n(),
+            tips_over_30 = sum(tip_amount > 30, na.rm = TRUE),
+            zero_distance = sum(trip_distance == 0, na.rm = TRUE),
+            non_card = sum(payment_type != 1, na.rm = TRUE))
+
+#Add payment type to the existing model#
+fit_combined3 <- update(fit_combined2, . ~ . + paid_by_card)
+summary(fit_combined3)
+
+#Compare model improvement and prediction errors RMSE 1.71, MAE .97#
+anova(fit_combined2, fit_combined3)
+summary.lm(fit_combined3)$r.squared
+sqrt(mean(residuals(fit_combined3)^2))
+mean(abs(residuals(fit_combined3)))
+
+
+#Group uncommon pickup and drop-off locations into Other#
+taxi_sample <- taxi_sample %>% mutate(PULocationID = fct_lump_min(PULocationID, min = 100),
+         DOLocationID = fct_lump_min(DOLocationID, min = 100))
+
+#Split data into 80% training and 20% testing#
+set.seed(23)
+train_id <- sample(nrow(taxi_sample), 80000)
+taxi_train <- taxi_sample[train_id, ]
+taxi_test <- taxi_sample[-train_id, ]
+
+#Train regression model with all seven predictors#
+fit_train <- lm(tip_amount ~ PULocationID + DOLocationID + pickup_dow_f + factor(pickup_hour) 
+                + fare_amount + trip_distance + paid_by_card, data = taxi_train)
+
+#Calculate RMSE and MAE using unseen trips. RMSE 1.82, MAE .99#
+pred <- predict(fit_train, newdata = taxi_test)
+valid <- !is.na(pred)
+rmse <- sqrt(mean((taxi_test$tip_amount[valid] - pred[valid])^2))
+mae <- mean(abs(taxi_test$tip_amount[valid] - pred[valid]))
+round(c(RMSE = rmse, MAE = mae), 3)
+
+#Check linear regression assumptions. Residuals not randomly scattered around 0. QQ plot not linear and has heavy tails. 
+#Likely due to heavy tipping patterns#
+par(mfrow = c(2, 2))
+plot(fit_train)
+par(mfrow = c(1, 1))
+
+#Identify the 10 observations with the highest Cook's distance#
+cooks <- cooks.distance(fit_train)
+head(sort(cooks, decreasing = TRUE), 10)
+
+#Review the five trips with the highest Cook's distance#
+top_cooks <- as.integer(names(head(sort(cooks, decreasing = TRUE), 5)))
+
+taxi_train[top_cooks, ] %>% select(tip_amount, fare_amount, trip_distance, payment_type,PULocationID, DOLocationID)
+
+#Exclude zero-distance trips and disputed payments#
+taxi_train_clean <- taxi_train %>% filter(trip_distance > 0, payment_type != 4)
+
+#Refit regression using cleaned training data#
+fit_clean <- update(fit_train, data = taxi_train_clean)
+
+#Evaluate cleaned model's training performance#
+sqrt(mean(residuals(fit_clean)^2))
+mean(abs(residuals(fit_clean)))
+
+#Apply the same cleaning rules to the test data#
+taxi_test_clean <- taxi_test %>% filter(trip_distance > 0, payment_type != 4)
+
+#Predict tips using the cleaned model#
+pred_clean <- predict(fit_clean, newdata = taxi_test_clean)
+
+#Calculate test RMSE and MAE. 1.75 and .97#
+rmse_clean <- sqrt(mean((taxi_test_clean$tip_amount - pred_clean)^2))
+mae_clean <- mean(abs(taxi_test_clean$tip_amount - pred_clean))
+round(c(RMSE = rmse_clean, MAE = mae_clean), 3)
+
+#Compare original and cleaned models on identical test records. Slight improvement but not significant 1.746 and .968#
+pred_original <- predict(fit_train, newdata = taxi_test_clean)
+
+compare <- data.frame(
+  Model = c("Original", "Cleaned"),
+  RMSE = c(sqrt(mean((taxi_test_clean$tip_amount - pred_original)^2)),
+           rmse_clean),
+  MAE = c(mean(abs(taxi_test_clean$tip_amount - pred_original)),
+          mae_clean))
+
+round_results <- compare
+round_results[, 2:3] <- round(round_results[, 2:3], 3)
+round_results
+
+#Recreate the original sample and 80/20 split#
+set.seed(123)
+taxi_sample2 <- taxi_clean %>% slice_sample(n = 100000)
+
+set.seed(123)
+train_id <- sample(nrow(taxi_sample2), 80000)
+taxi_train2 <- taxi_sample2[train_id, ]
+taxi_test2 <- taxi_sample2[-train_id, ]
+
+#Exclude zero-distance trips and disputed payments#
+taxi_train2 <- taxi_train2 %>%  filter(trip_distance > 0, payment_type != 4)
+taxi_test2 <- taxi_test2 %>% filter(trip_distance > 0, payment_type != 4)
+
+#Identify common locations using training data#
+pu_keep <- names(which(table(taxi_train2$PULocationID) >= 100))
+do_keep <- names(which(table(taxi_train2$DOLocationID) >= 100))
+
+#Apply the same grouping to training and testing data#
+group_loc <- function(x, keep) {factor(ifelse(as.character(x) %in% keep, as.character(x), "Other"))}
+
+taxi_train2$PULocationID <- group_loc(taxi_train2$PULocationID, pu_keep)
+taxi_test2$PULocationID <- group_loc(taxi_test2$PULocationID, pu_keep)
+
+taxi_train2$DOLocationID <- group_loc(taxi_train2$DOLocationID, do_keep)
+taxi_test2$DOLocationID <- group_loc(taxi_test2$DOLocationID, do_keep)
+
+#Fit the final regression model#
+fit_final <- lm(tip_amount ~ PULocationID + DOLocationID +pickup_dow_f + factor(pickup_hour) +
+                  fare_amount + trip_distance + paid_by_card,data = taxi_train2)
+
+#Calculate RMSE and MAE on unseen trips#
+pred_final <- predict(fit_final, newdata = taxi_test2)
+
+rmse_final <- sqrt(mean((taxi_test2$tip_amount - pred_final)^2))
+mae_final <- mean(abs(taxi_test2$tip_amount - pred_final))
+
+round(c(RMSE = rmse_final, MAE = mae_final), 3)
+
+#Save final regression model and location mappings#
+saveRDS(list(model = fit_final, pu_keep = pu_keep,do_keep = do_keep), "taxi_final_model.rds")
